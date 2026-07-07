@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'freewave-radio'
 
 export default defineConfig({
-  base: process.env.GITHUB_ACTIONS ? `/${repoName}/` : '/',
+  base: process.env.GITHUB_ACTIONS ? `/${repoName}/` : './',
   plugins: [
     react(),
     VitePWA({
@@ -19,7 +19,7 @@ export default defineConfig({
         background_color: '#0b0f14',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: '/',
+        start_url: './',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
