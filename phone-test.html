@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0f14" />
+    <title>FreeWave Radio • Phone Test</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #071018;
+        --panel: #111827;
+        --panel-2: #172033;
+        --text: #f3f7ff;
+        --muted: #93a0b8;
+        --accent: #62d6ff;
+        --accent-2: #8b5cf6;
+        --border: rgba(255,255,255,0.08);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, Arial, sans-serif;
+        background: linear-gradient(135deg, var(--bg), #132132);
+        color: var(--text);
+        min-height: 100vh;
+      }
+
+      .app {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 16px 14px 90px;
+      }
+
+      .hero {
+        background: linear-gradient(120deg, rgba(98,214,255,0.16), rgba(139,92,246,0.18));
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+
+      .hero h1 {
+        margin: 0 0 6px;
+        font-size: clamp(1.2rem, 4vw, 1.65rem);
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 14px;
+        margin-bottom: 12px;
+      }
+
+      .search-row {
+        display: flex;
+        gap: 10px;
+      }
+
+      input {
+        flex: 1;
+        padding: 12px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+        color: var(--text);
+        font-size: 16px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 14px;
+        font-size: 15px;
+        cursor: pointer;
+        color: var(--text);
+      }
+
+      .primary {
+        background: linear-gradient(120deg, var(--accent), var(--accent-2));
+        font-weight: 700;
+      }
+
+      .secondary {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+      }
+
+      .status {
+        color: var(--muted);
+        margin: 8px 0 0;
+        font-size: 14px;
+      }
+
+      .station-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 10px;
+      }
+
+      .station-item {
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 12px;
+        background: rgba(255,255,255,0.03);
+      }
+
+      .station-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .station-name {
+        font-weight: 700;
+        margin: 0 0 4px;
+      }
+
+      .station-meta {
+        color: var(--muted);
+        font-size: 13px;
+        margin: 2px 0;
+      }
+
+      .station-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .active {
+        outline: 1px solid rgba(98,214,255,0.5);
+        background: rgba(98,214,255,0.08);
+      }
+
+      .empty {
+        text-align: center;
+        color: var(--muted);
+        padding: 24px 0 8px;
+      }
+
+      @media (max-width: 480px) {
+        .app { padding: 12px 10px 90px; }
+        .search-row { flex-direction: column; }
+        .station-top { flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <section class="hero">
+        <h1>FreeWave Radio</h1>
+        <p>Open this page on your phone and tap a station to play it instantly.</p>
+      </section>
+
+      <section class="card">
+        <div class="search-row">
+          <input id="search" type="search" placeholder="Search station name" />
+          <button class="primary" id="searchBtn">Search</button>
+        </div>
+        <p class="status" id="status">Loading stations…</p>
+      </section>
+
+      <section class="card">
+        <ul id="stationList" class="station-list"></ul>
+      </section>
+    </div>
+
+    <audio id="player" preload="none"></audio>
+
+    <script>
+      const FALLBACK_MIRRORS = [
+        'de1.api.radio-browser.info',
+        'de2.api.radio-browser.info',
+        'nl1.api.radio-browser.info',
+        'at1.api.radio-browser.info',
+      ]
+
+      let cachedBaseUrl = null
+      let resolvingPromise = null
+      let activeStation = null
+      let currentAudio = null
+
+      const searchInput = document.getElementById('search')
+      const searchBtn = document.getElementById('searchBtn')
+      const stationList = document.getElementById('stationList')
+      const statusEl = document.getElementById('status')
+      const player = document.getElementById('player')
+
+      searchBtn.addEventListener('click', () => loadStations(searchInput.value.trim()))
+      searchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') loadStations(searchInput.value.trim())
+      })
+
+      async function pickMirror() {
+        try {
+          const res = await fetch('https://all.api.radio-browser.info/json/servers', {
+            headers: { Accept: 'application/json' },
+          })
+          if (!res.ok) throw new Error('server list request failed')
+          const servers = await res.json()
+          const names = (Array.isArray(servers) ? servers : []).map((s) => s.name).filter(Boolean)
+          if (names.length > 0) return names[Math.floor(Math.random() * names.length)]
+        } catch {
+          // fall back to known mirror
+        }
+        return FALLBACK_MIRRORS[Math.floor(Math.random() * FALLBACK_MIRRORS.length)]
+      }
+
+      async function getBaseUrl() {
+        if (cachedBaseUrl) return cachedBaseUrl
+        if (resolvingPromise) return resolvingPromise
+
+        resolvingPromise = (async () => {
+          const host = await pickMirror()
+          cachedBaseUrl = `https://${host}/json`
+          return cachedBaseUrl
+        })()
+
+        return resolvingPromise
+      }
+
+      async function apiFetch(path, params = {}) {
+        const base = await getBaseUrl()
+        const url = new URL(base + path)
+        Object.entries(params).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            url.searchParams.set(key, value)
+          }
+        })
+
+        const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } })
+        if (!res.ok) throw new Error(`Request failed: ${res.status}`)
+        return res.json()
+      }
+
+      function normalizeStation(raw) {
+        return {
+          id: raw.stationuuid,
+          name: raw.name?.trim() || 'Unnamed Station',
+          url: raw.url_resolved || raw.url,
+          country: raw.country || 'Unknown',
+          tags: raw.tags ? raw.tags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+          votes: raw.votes || 0,
+        }
+      }
+
+      async function loadStations(query = '') {
+        statusEl.textContent = 'Loading stations…'
+        try {
+          const data = query
+            ? await apiFetch('/stations/search', {
+                name: query,
+                hidebroken: true,
+                limit: 30,
+                order: 'votes',
+                reverse: true,
+              })
+            : await apiFetch('/stations/topvote/30', { hidebroken: true })
+
+          const stations = (Array.isArray(data) ? data : []).map(normalizeStation)
+          renderStations(stations)
+          if (stations.length === 0) {
+            statusEl.textContent = 'No stations found. Try another search.'
+          } else {
+            statusEl.textContent = `Showing ${stations.length} stations` 
+          }
+        } catch (error) {
+          statusEl.textContent = 'Could not load stations. Please try again.'
+          stationList.innerHTML = '<li class="empty">Connection issue. Please refresh and try again.</li>'
+        }
+      }
+
+      function renderStations(stations) {
+        if (!stations.length) {
+          stationList.innerHTML = '<li class="empty">No stations found.</li>'
+          return
+        }
+
+        stationList.innerHTML = stations.map((station) => {
+          const isActive = activeStation?.id === station.id
+          const tags = station.tags.slice(0, 3).join(' • ') || 'No tags listed'
+          return `
+            <li
+              class="station-item ${isActive ? 'active' : ''}"
+              data-id="${escapeHtml(station.id)}"
+              data-name="${escapeHtml(station.name)}"
+              data-country="${escapeHtml(station.country)}"
+              data-url="${escapeHtml(station.url || '')}"
+            >
+              <div class="station-top">
+                <div>
+                  <p class="station-name">${escapeHtml(station.name)}</p>
+                  <p class="station-meta">${escapeHtml(station.country)} • ${station.votes} votes</p>
+                  <p class="station-meta">${escapeHtml(tags)}</p>
+                </div>
+              </div>
+              <div class="station-actions">
+                <button class="primary" data-action="play" data-id="${escapeHtml(station.id)}">Play</button>
+                <button class="secondary" data-action="stop" data-id="${escapeHtml(station.id)}">Stop</button>
+              </div>
+            </li>
+          `
+        }).join('')
+      }
+
+      stationList.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-action]')
+        if (!button) return
+
+        const stationId = button.getAttribute('data-id')
+        const station = Array.from(stationList.querySelectorAll('.station-item')).find((item) => item.querySelector('button[data-action]')?.getAttribute('data-id') === stationId)
+        if (!station) return
+
+        const action = button.getAttribute('data-action')
+        if (action === 'stop') {
+          player.pause()
+          activeStation = null
+          renderStations([])
+          statusEl.textContent = 'Playback stopped.'
+          return
+        }
+
+        const stationData = getStationDataFromDom(stationId)
+        if (!stationData) return
+
+        playStation(stationData)
+      })
+
+      function getStationDataFromDom(stationId) {
+        const item = Array.from(stationList.querySelectorAll('.station-item')).find((entry) => entry.getAttribute('data-id') === stationId)
+        if (!item) return null
+
+        return {
+          id: stationId,
+          name: item.getAttribute('data-name') || 'Station',
+          country: item.getAttribute('data-country') || 'Unknown',
+          url: item.getAttribute('data-url') || '',
+        }
+      }
+
+      async function playStation(station) {
+        activeStation = station
+        statusEl.textContent = `Connecting to ${station.name}…`
+        player.src = station.url
+        player.load()
+        try {
+          await player.play()
+          statusEl.textContent = `Now playing: ${station.name}`
+          renderStations(getCurrentStations())
+        } catch (error) {
+          statusEl.textContent = 'Playback was blocked. Tap play again.'
+        }
+      }
+
+      function getCurrentStations() {
+        return Array.from(stationList.querySelectorAll('.station-item')).map((item) => ({
+          id: item.getAttribute('data-id') || '',
+          name: item.getAttribute('data-name') || 'Station',
+          country: item.getAttribute('data-country') || 'Unknown',
+          url: item.getAttribute('data-url') || '',
+        }))
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;')
+      }
+
+      loadStations()
+    </script>
+  </body>
+</html>
